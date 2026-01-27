@@ -1,4 +1,4 @@
-= Collab By Code Event UI
+clusters/ocp-example_additional_nodes.yaml
 
 
 == Create Application in OpenShift
