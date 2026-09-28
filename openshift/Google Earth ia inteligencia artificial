@@ -1,0 +1,292 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: collab-by-code-ui
+  annotations:
+    description: "RHCollab By Code Event UI"
+    iconClass: "icon-nodejs"
+    tags: "nodejs"
+    openshift.io/display-name: Collab by Code Event UI
+parameters:
+  - name: GITHUB_WEBHOOK_SECRET
+    displayName: "GitHub Webhook Secret"
+    description: "Github trigger secret.  A difficult to guess string encoded as part of the webhook URL.  Not encrypted."
+    generate: "expression"
+    from: "[a-zA-Z0-9]{40}"
+  - name: GENERIC_WEBHOOK_SECRET
+    displayName: "Generic Webhook Secret"
+    description: "A secret string used to configure the Generic webhook."
+    generate: "expression"
+    from: "[a-zA-Z0-9]{40}"
+  - description: Git branch/tag reference
+    name: SOURCE_REPOSITORY_REF
+    value: master
+  - description: Git source URL for application
+    name: SOURCE_REPOSITORY_URL
+    required: true
+    value: https://github.com/kameshsampath/collab-by-code-ui.git
+  - name: OUTPUT_DIR
+    description: The location of the compiled static files from your web apps builder
+    displayName: Output Directory
+    value: dist
+    required: false
+  - name: COLLAB_API_SERVICE_URL
+    description: The Collab by Code service API URL
+    displayName: Collab by code Service API URL
+    required: true
+  - name: KEYCLOAK_URL
+    description: The Keycloak server URL
+    displayName: Keycloak Server URL
+    value: http://my-keycloak.example.com/auth
+    required: true
+  - name: KEYCLOAK_REALM
+    description: The Keycloak Realm to use
+    displayName: Keycloak Realm
+    value: collabbycode
+    required: false
+  - name: KEYCLOAK_CLIENT_ID
+    description: The Keycloak Client Id
+    displayName: Keycloak Client Id
+    value: collab-by-code-ui
+    required: false
+objects:
+  - kind: ConfigMap
+    apiVersion: v1
+    metadata:
+      name: collab-by-code-ui
+    data:
+      api.questions.uri: ${COLLAB_API_SERVICE_URL}/api/questions
+      api.frames.uri: ${COLLAB_API_SERVICE_URL}/api/frames
+      api.collaborators.uri: ${COLLAB_API_SERVICE_URL}/api/collaborators
+      api.avatars.uri: ${COLLAB_API_SERVICE_URL}/avatars
+      api.gist.uri: ${COLLAB_API_SERVICE_URL}/api/gist
+      socket.uri: ${COLLAB_API_SERVICE_URL}
+      keycloak.url: ${KEYCLOAK_URL}
+      keycloak.realm: ${KEYCLOAK_REALM}
+      keycloak.clientId: ${KEYCLOAK_CLIENT_ID}
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      labels:
+        app: collab-by-code-ui
+      name: collab-by-code-ui
+    spec:
+      ports:
+        - name: web
+          port: 8080
+          protocol: TCP
+          targetPort: 8080
+      selector:
+        app: collab-by-code-ui
+  - apiVersion: v1
+    kind: Route
+    metadata:
+      labels:
+        app: collab-by-code-ui
+      name: collab-by-code-ui
+    spec:
+      port:
+        targetPort: web
+      tls:
+        termination: edge
+      to:
+        kind: Service
+        name: collab-by-code-ui
+  # the s2i image that builds cbc-webapp-builder
+  - kind: ImageStream
+    apiVersion: v1
+    metadata:
+      name: cbc-webapp-builder-runtime
+    spec:
+      tags:
+        - name: latest
+          from:
+            kind: DockerImage
+            name: bucharestgold/centos7-s2i-web-app:0.0.2
+  # Build the base builder image
+  - kind: ImageStream
+    apiVersion: v1
+    metadata:
+      name: cbc-webapp-builder
+  # Actual Runtime based on cbc-webapp-builder-runtime Image
+  - kind: ImageStream
+    apiVersion: v1
+    metadata:
+      name: collab-by-code-ui
+      annotations:
+        description: "Collab by Code Event UI"
+  - apiVersion: v1
+    kind: ImageStream
+    metadata:
+      name: nginx-image-runtime
+    spec:
+      tags:
+        - name: latest
+          from:
+            kind: DockerImage
+            name: "centos/nginx-112-centos7:latest"
+
+  # Build the Web App Builder from sources
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: cbc-webapp-builder
+    spec:
+      output:
+        to:
+          kind: ImageStreamTag
+          name: cbc-webapp-builder:latest
+      source:
+        git:
+          ref: ${SOURCE_REPOSITORY_REF}
+          uri: ${SOURCE_REPOSITORY_URL}
+        type: Git
+      strategy:
+        sourceStrategy:
+          env:
+            - name: YARN_ENABLED
+              value: "true"
+            - name: NODE_ENV
+              value: development
+            - name: OUTPUT_DIR
+              value: ${OUTPUT_DIR}
+            - name: VUE_APP_QUESTIONS_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: api.questions.uri
+            - name: VUE_APP_FRAMES_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: api.frames.uri
+            - name: VUE_APP_COLLABORATORS_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: api.collaborators.uri
+            - name: VUE_APP_COLLABORATORS_AVATAR_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: api.avatars.uri
+            - name: VUE_APP_SOCKET_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: socket.uri
+            - name: VUE_APP_GIST_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: api.gist.uri
+            - name: VUE_APP_KEYCLOAK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: keycloak.url
+            - name: VUE_APP_KEYCLOAK_REALM
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: keycloak.realm
+            - name: VUE_APP_KEYCLOAK_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: collab-by-code-ui
+                  key: keycloak.clientId
+          from:
+            kind: ImageStreamTag
+            name: cbc-webapp-builder-runtime:latest
+          incremental: true
+        type: Source
+      triggers:
+        - generic:
+            secret: ${GENERIC_WEBHOOK_SECRET}
+          type: Generic
+        - github:
+            secret: ${GITHUB_WEBHOOK_SECRET}
+          type: GitHub
+        - type: ImageChange
+        - type: ConfigChange
+
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      annotations:
+        template.alpha.openshift.io/wait-for-ready: "true"
+      labels:
+        app: collab-by-code-ui
+      name: collab-by-code-ui
+    spec:
+      output:
+        to:
+          kind: ImageStreamTag
+          name: collab-by-code-ui:latest
+      source:
+        type: Image
+        images:
+          - from:
+              kind: ImageStreamTag
+              name: cbc-webapp-builder:latest
+            paths:
+              - destinationDir: .
+                sourcePath: /opt/app-root/output/.
+      strategy:
+        sourceStrategy:
+          from:
+            kind: ImageStreamTag
+            name: nginx-image-runtime:latest
+          incremental: true
+        type: Source
+      triggers:
+        - generic:
+            secret: ${GENERIC_WEBHOOK_SECRET}
+          type: Generic
+        - github:
+            secret: ${GITHUB_WEBHOOK_SECRET}
+          type: GitHub
+        - type: ImageChange
+          imageChange:
+            from:
+              kind: ImageStreamTag
+              name: cbc-webapp-builder:latest
+        - type: ConfigChange
+
+  - apiVersion: apps.openshift.io/v1
+    kind: DeploymentConfig
+    metadata:
+      annotations:
+        template.alpha.openshift.io/wait-for-ready: "true"
+      labels:
+        app: collab-by-code-ui
+      name: collab-by-code-ui
+    spec:
+      strategy:
+        type: Rolling
+      triggers:
+        - imageChangeParams:
+            automatic: true
+            containerNames:
+              - collab-by-code-ui
+            from:
+              kind: ImageStreamTag
+              name: "collab-by-code-ui:latest"
+          type: ImageChange
+        - type: ConfigChange
+      replicas: 1
+      selector:
+        app: collab-by-code-ui
+      template:
+        metadata:
+          name: collab-by-code-ui
+          labels:
+            app: collab-by-code-ui
+        spec:
+          containers:
+            - name: collab-by-code-ui
+              image: "collab-by-code-ui:latest"
+              ports:
+                - containerPort: 8080
+                  protocol: TCP
+              resources: {}
